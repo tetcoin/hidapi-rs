@@ -31,7 +31,7 @@ fn main() {
             .compile("libhidapi.a");
         println!("cargo:rustc-link-lib=setupapi");
 
-    } else if target.contains("macos") {
+    } else if target.contains("darwin") {
         cc::Build::new()
             .file("etc/hidapi/mac/hid.c")
             .include("etc/hidapi/hidapi")
