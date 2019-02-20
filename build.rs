@@ -19,7 +19,18 @@
 
 extern crate cc;
 
+use std::process::Command;
 use std::env;
+
+const ANDROID_COMMANDS: [&str; 5] = [
+    "git checkout 83d918449f22720d84a341a05e24b6d109e6d3ae",
+    "./autogen.sh",
+    "./configure --disable-introspection --disable-programs --disable-hwdb --host=arm-linux-androideabi --prefix=/opt/ndk-standalone/sysroot/usr/ --enable-shared=false CC=arm-linux-androideabi-clang CFLAGS=\"-D LINE_MAX=2048 -D RLIMIT_NLIMITS=15 -D IPTOS_LOWCOST=2 -std=gnu99\" CXX=arm-linux-androideabi-clang++",
+    "git apply - < ../libudev.patch",
+    "make"
+];
+
+const OTHER_LINUX: [&str; 3] = ["./autogen.sh", "./configure", "make"];
 
 fn main() {
     let target = env::var("TARGET").unwrap();
@@ -39,10 +50,38 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=IOKit");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
-    } else if target.contains("linux") {
+    } else if target.contains("android") {
+        gnu_make(&ANDROID_COMMANDS);
         let mut config = cc::Build::new();
         config.file("etc/hidapi/linux/hid.c").include("etc/hidapi/hidapi");
         config.compile("libhidapi.a");
-        println!("cargo:rustc-link-lib=udev");
+
+        println!("cargo:rustc-link-search=native=./etc/eudev/src/libudev/.libs");
+        println!("cargo:rustc-link-lib=static=udev");
+    } else if target.contains("linux") {
+        gnu_make(&OTHER_LINUX);
+        let mut config = cc::Build::new();
+        config.file("etc/hidapi/linux/hid.c").include("etc/hidapi/hidapi");
+        config.compile("libhidapi.a");
+
+        println!("cargo:rustc-link-search=native=./etc/eudev/src/libudev/.libs");
+        println!("cargo:rustc-link-lib=static=udev");
     }
+}
+
+
+fn gnu_make(commands: &[&str]) {
+    let start = std::env::current_dir().expect("Couldn't fetch current directory");
+    let target = std::path::Path::new(&start).join("etc/eudev");
+    env::set_current_dir(target).expect("Could not find the directory: \"etc\\eudev\"");
+
+    for c in commands.iter() {
+        let success = Command::new(c)
+            .status()
+            .expect("command failed")
+            .success();
+        assert!(success, "Command: {:?} failed");
+    }
+
+    env::set_current_dir(start).expect("Couldn't go back to start directory");
 }
