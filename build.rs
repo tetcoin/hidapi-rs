@@ -17,25 +17,12 @@
 // along with hidapi_rust.  If not, see <http://www.gnu.org/licenses/>.
 // *************************************************************************
 
+extern crate autotools;
 extern crate cc;
 
 use std::process::Command;
 use std::env;
-
-// Copy-pasted from `https://github.com/paritytech/parity-ethereum/blob/cb03f380ab2bb37ff18771e6886c42098ad8b15a/docker/android/Dockerfile#L44-L62`
-const ANDROID_CFG: [&str; 5] = [
-	"git checkout 83d918449f22720d84a341a05e24b6d109e6d3ae",
-	"git apply ../libudev.patch",
-	"./autogen.sh",
-	"./configure --disable-introspection --disable-programs --disable-hwdb --host=arm-linux-androideabi --prefix=/opt/ndk-standalone/sysroot/usr/ --enable-shared=false",
-	"make"
-];
-
-const LINUX_CFG: [&str; 3] = [
-	"./autogen.sh",
-	"./configure",
-	"make"
-];
+use std::path::Path;
 
 fn main() {
 	let target = env::var("TARGET").unwrap();
@@ -57,53 +44,90 @@ fn main() {
 		println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
 	} else if target.contains("android") {
-		set_android_flags();
-		execute_shell_cmd(&ANDROID_CFG);
+		enable_android_hack();
+		env::set_var("CXX", "arm-linux-androideabi-clang++");
+		env::set_var("CC", "arm-linux-androideabi-gcc");
+		let libudev = autotools::Config::new("etc/eudev")
+			// -s: make symlinks
+			// -m: build if it applicable
+			// -i: install
+			// -v: verbose
+			// -f: consider all files obsolete
+			.reconf("-smivf")
+			.insource(true)
+			.host("arm-linux-androideabi")
+			.disable_shared()
+			.disable("-introspection", None)
+			.disable("-programs", None)
+			.disable("-hwdb", None)
+			.cflag("-D LINE_MAX=2048")
+			.cflag("-D RLIMIT_NLIMITS=15")
+			.cflag("-D IPTOS_LOWCOST=2")
+			.cflag("-std=gnu99")
+			.build();
+
+		disable_android_hack();
+
 		let mut config = cc::Build::new();
 		config.file("etc/hidapi/linux/hid.c").include("etc/hidapi/hidapi");
 		config.compile("libhidapi.a");
 
-		println!("cargo:rustc-link-search=native=./etc/eudev/src/libudev/.libs");
+		println!("cargo:rustc-link-search=native={}/src/libudev/.libs", libudev.display());
 		println!("cargo:rustc-link-lib=static=udev");
 	} else if target.contains("linux") {
-		execute_shell_cmd(&LINUX_CFG);
-		let mut config = cc::Build::new();
-		config.file("etc/hidapi/linux/hid.c").include("etc/hidapi/hidapi");
-		config.compile("libhidapi.a");
 
-		println!("cargo:rustc-link-search=native=./etc/eudev/src/libudev/.libs");
+		let libudev = autotools::Config::new("etc/eudev")
+			// -s: make symlinks
+			// -m: build if it applicable
+			// -i: install
+			// -v: verbose
+			// -f: consider all files obsolete
+			.reconf("-smivf")
+			.insource(true)
+			.disable_shared()
+			.build();
+
+		cc::Build::new()
+			.file("etc/hidapi/linux/hid.c")
+			.include("etc/hidapi/hidapi")
+			.compile("libhidapi.a");
+
+		println!("cargo:rustc-link-search=native={}/src/libudev/.libs", libudev.display());
 		println!("cargo:rustc-link-lib=static=udev");
 	}
 }
 
-fn set_android_flags() {
-	env::set_var("CFLAGS", "-D LINE_MAX=2048 -D RLIMIT_NLIMITS=15 -D IPTOS_LOWCOST=2 -std=gnu99");
-	env::set_var("CXX", "arm-linux-androideabi-clang++");
-	env::set_var("CC", "arm-linux-androideabi-gcc");
+fn enable_android_hack() {
+	env::set_current_dir(Path::new("etc/eudev"))
+		.expect("Could not find the directory: \"etc\\eudev\"");
+
+	Command::new("git")
+			.args(&["checkout", "83d918449f22720d84a341a05e24b6d109e6d3ae"])
+			.status()
+			.expect("git checkout failed");
+
+	Command::new("git")
+			.args(&["apply", "../libudev.patch"])
+			.status()
+			.expect("git apply etc/libudev.patch failed");
+
+	env::set_current_dir(Path::new("../.."))
+		.expect("Could not find the directory: \"etc\\eudev\"");
 }
 
-fn execute_shell_cmd(commands: &[&str]) {
-	let start = std::env::current_dir().expect("Couldn't fetch current directory");
-	let target = std::path::Path::new(&start).join("etc/eudev");
-	env::set_current_dir(target).expect("Could not find the directory: \"etc\\eudev\"");
+fn disable_android_hack() {
+	env::set_current_dir(Path::new("etc/eudev"))
+		.expect("Could not find the directory: \"etc\\eudev\"");
 
-	for full_cmd in commands.iter() {
-		let ignore_error = full_cmd.starts_with("git") && full_cmd.contains("apply");
-
-		let mut it = full_cmd.split_whitespace();
-		let cmd = it.next().expect("A command should have at least one element; qed");
-
-		let this_cmd = Command::new(cmd)
-			.args(it)
+	Command::new("git")
+			.args(&["apply", "-R", "../libudev.patch"])
 			.status()
-			.expect(&format!("Command {} failed", cmd));
+			.expect("git revert patch failed");
+	Command::new("git")
+			.args(&["checkout", "master"])
+			.status()
+			.expect("git checkout master failed");
 
-	if !this_cmd.success() && !ignore_error {
-			panic!("{}", this_cmd);
-	} else if ignore_error {
-			println!("IGNORED \"git apply error\" {}", this_cmd);
-		}
-	}
-
-	env::set_current_dir(start).expect("Couldn't go back to start directory");
+	env::set_current_dir(Path::new("../.."))
+		.expect("Could not find the directory: \"etc\\eudev\"");
 }
