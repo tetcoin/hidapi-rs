@@ -57,8 +57,7 @@ fn main() {
 		println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
 	} else if target.contains("android") {
-		env::set_var("CFLAGS", "-D LINE_MAX=2048 -D RLIMIT_NLIMITS=15 -D IPTOS_LOWCOST=2 -std=gnu99");
-		env::set_var("CXX", "arm-linux-androideabi-clang++");
+		set_android_flags();
 		execute_shell_cmd(&ANDROID_CFG);
 		let mut config = cc::Build::new();
 		config.file("etc/hidapi/linux/hid.c").include("etc/hidapi/hidapi");
@@ -75,6 +74,12 @@ fn main() {
 		println!("cargo:rustc-link-search=native=./etc/eudev/src/libudev/.libs");
 		println!("cargo:rustc-link-lib=static=udev");
 	}
+}
+
+fn set_android_flags() {
+	env::set_var("CFLAGS", "-D LINE_MAX=2048 -D RLIMIT_NLIMITS=15 -D IPTOS_LOWCOST=2 -std=gnu99");
+	env::set_var("CXX", "arm-linux-androideabi-clang++");
+	env::set_var("CC", "arm-linux-androideabi-gcc");
 }
 
 fn execute_shell_cmd(commands: &[&str]) {
