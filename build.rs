@@ -22,7 +22,12 @@ extern crate cc;
 
 use std::process::Command;
 use std::env;
-use std::path::Path;
+use std::path::PathBuf;
+
+#[cfg(windows)]
+const GIT: &str = "git.exe";
+#[cfg(not(windows))]
+const GIT: &str = "git";
 
 fn main() {
 	let target = env::var("TARGET").unwrap();
@@ -57,9 +62,9 @@ fn main() {
 			.insource(true)
 			.host("arm-linux-androideabi")
 			.disable_shared()
-			.disable("-introspection", None)
-			.disable("-programs", None)
-			.disable("-hwdb", None)
+			.disable("introspection", None)
+			.disable("programs", None)
+			.disable("hwdb", None)
 			.cflag("-D LINE_MAX=2048")
 			.cflag("-D RLIMIT_NLIMITS=15")
 			.cflag("-D IPTOS_LOWCOST=2")
@@ -98,36 +103,47 @@ fn main() {
 }
 
 fn enable_android_hack() {
-	env::set_current_dir(Path::new("etc/eudev"))
-		.expect("Could not find the directory: \"etc\\eudev\"");
+	let (start_dir, dst_dir) = get_dirs();
+	env::set_current_dir(dst_dir).expect("set current dir to \"etc/eudev\" failed");
 
-	Command::new("git")
+	let cmd = Command::new(GIT)
 			.args(&["checkout", "83d918449f22720d84a341a05e24b6d109e6d3ae"])
 			.status()
 			.expect("git checkout failed");
+	assert!(cmd.success(), format!("{}", cmd));
 
-	Command::new("git")
+	let cmd = Command::new(GIT)
 			.args(&["apply", "../libudev.patch"])
 			.status()
 			.expect("git apply etc/libudev.patch failed");
+	assert!(cmd.success(), format!("{}", cmd));
 
-	env::set_current_dir(Path::new("../.."))
-		.expect("Could not find the directory: \"etc\\eudev\"");
+	env::set_current_dir(start_dir).expect("set current dir to \"../..\" failed");
 }
 
 fn disable_android_hack() {
-	env::set_current_dir(Path::new("etc/eudev"))
-		.expect("Could not find the directory: \"etc\\eudev\"");
+	let (start_dir, dst_dir) = get_dirs();
+	env::set_current_dir(dst_dir).expect("set current dir to \"etc/eudev\" failed");
 
-	Command::new("git")
+	let cmd = Command::new(GIT)
 			.args(&["apply", "-R", "../libudev.patch"])
 			.status()
 			.expect("git revert patch failed");
-	Command::new("git")
+
+	assert!(cmd.success(), format!("{}", cmd));
+
+	let cmd = Command::new(GIT)
 			.args(&["checkout", "master"])
 			.status()
 			.expect("git checkout master failed");
 
-	env::set_current_dir(Path::new("../.."))
-		.expect("Could not find the directory: \"etc\\eudev\"");
+	assert!(cmd.success(), format!("{}", cmd));
+
+	env::set_current_dir(start_dir).expect("set current dir to \"../..\" failed");
+}
+
+fn get_dirs() -> (PathBuf, PathBuf) {
+	let start_dir = env::current_dir().expect("Current dir failed");
+	let dst_dir = start_dir.join("etc/eudev");
+	(start_dir.to_owned(), dst_dir.to_owned())
 }
